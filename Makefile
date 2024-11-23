@@ -7,7 +7,7 @@ CFLAGS = -g3 -O0 $(CXXFLAGS) -I$(SRC_DIR)  # Include the source directory for he
 SRC_DIR = .
 
 # Library source files  (Add or remove as needed)
-LIB_SRCS = tcp.cpp TcpStringClientServer.cpp
+LIB_SRCS = tcp.cpp TcpStringClientServer.cpp WebSocket.cpp
 LIB_OBJS = $(LIB_SRCS:.cpp=.o)
 
 # Main program source file
@@ -27,11 +27,11 @@ $(LIB_OBJS): %.o: %.cpp
 $(MAIN_OBJ): %.o: %.cpp
 	$(CC) $(CFLAGS) -c $< -o $@
 
-
+all: ws
 
 # Link main program with library
 ws: $(MAIN_OBJ) $(LIBDIRGENLIB)
-	$(CC) $(CFLAGS) -o $@ $(MAIN_OBJ) -L$(LIBDIR) -l$(GENLIB)  # Link with the library
+	$(CC) $(CFLAGS) -o $@ $(MAIN_OBJ) -L$(LIBDIR) -l$(GENLIB) `pkg-config --libs openssl` -pthread  # Link with the library
 
 
 # Clean all compiled files and the library

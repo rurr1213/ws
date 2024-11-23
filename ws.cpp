@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include "TcpSocket.h"
+#include "WebSocket.h"
 
 class MyTcpSocket : public TcpSocket {
 public:
@@ -18,9 +18,32 @@ public:
         std::string received(data, length);
         std::cout << "Received: " << received << std::endl;
         // ... process the received data ...
+        std::string response = received;
+        send(response.c_str(), response.length());
         if (received == "exit") {  // Example: close connection on "exit" command
             closeClient();
         }
+    }
+};
+
+
+std::string keyFile = "privkey.pem";
+std::string certFile = "fullchain.pem";
+std::string ip_address = "127.0.0.1";
+int ws_port = 5056;
+
+Logger thislogger;
+
+class MyWebSocketSecureServer : public WebSocketSecureServer {
+public:
+    MyWebSocketSecureServer() : WebSocketSecureServer(keyFile, certFile, ip_address, ws_port, thislogger) {}
+
+    void onReceiveStringData(std::string& textString) {
+        std::cout << "RecT: " << textString << std::endl;
+    }
+
+    void onReceiveBinaryData(uint8_t *, std::size_t) {
+        std::cout << "RecB: " << std::endl;
     }
 };
 
@@ -50,15 +73,20 @@ int main(int argc, char **argv)
 
     }
 
+
     if (client==true) {
     } else {
-        MyTcpSocket server("127.0.0.1", 5056);  // Listening on localhost
-        if (server.listen()) {
+        MyTcpSocket wsserver("127.0.0.1", 5056);  // Listening on localhost
+        if (wsserver.listen()) {
             while (true) {
-                server.accept();
-                while(server.waitAndReceive()){} // Keep receiving until client disconnects/error
+                wsserver.accept();
+                while(wsserver.waitAndReceive()){} // Keep receiving until client disconnects/error
             }
-            server.close();
+            wsserver.close();
         }
+        /*
+        MyWebSocketSecureServer tcpserver;
+        tcpserver.startServer();
+        */
     }
 }
