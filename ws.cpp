@@ -29,7 +29,8 @@ public:
 
 std::string keyFile = "privkey.pem";
 std::string certFile = "fullchain.pem";
-std::string ip_address = "127.0.0.1";
+//std::string ip_address = "127.0.0.1";
+std::string ip_address = "0.0.0.0";
 int ws_port = 5056;
 
 Logger thislogger;
@@ -76,7 +77,7 @@ int main(int argc, char **argv)
 
     if (client==true) {
     } else {
-
+        /*
         //MyTcpSocket wsserver("secondary.hyperkube.net", 5056);  // Listening on localhost
         MyTcpSocket wsserver("0.0.0.0", 5056);  // Listening on localhost
         if (wsserver.listen()) {
@@ -86,8 +87,8 @@ int main(int argc, char **argv)
             }
             wsserver.close();
         }
-
-    //    MyWebSocketSecureServer tcpserver;
-    //    tcpserver.startServer();
+        */
+        MyWebSocketSecureServer tcpserver;
+        tcpserver.startServer();
     }
 }

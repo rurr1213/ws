@@ -14,8 +14,8 @@ def tcp_client(host, port, message):
 
 if __name__ == "__main__":
     #host = "172.31.28.82"  # Replace with your server's hostname or IP
-    #host = "secondary.hyperkube.net"  # Replace with your server's hostname or IP
-    host = "18.119.99.233"  # Replace with your server's hostname or IP
+    host = "secondary.hyperkube.net"  # Replace with your server's hostname or IP
+    #host = "127.0.0.1"  # Replace with your server's hostname or IP
     port = 5056  # Replace with your server's port
     message = "Hello, TCP Server!"
     tcp_client(host, port, message)
