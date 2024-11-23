@@ -2,9 +2,27 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include "TcpStringClientServer.h"
 
-TcpStringServer tcpStringserver;
+#include "TcpSocket.h"
+
+class MyTcpSocket : public TcpSocket {
+public:
+    MyTcpSocket(const std::string& ip, int port) : TcpSocket(ip, port) {}
+
+    void onAccept(int clientSocket, const sockaddr_in& clientAddress) override {
+        std::cout << "Client connected from: " << inet_ntoa(clientAddress.sin_addr) << std::endl;
+        // ... other actions after accepting a connection ...
+    }
+
+    void onReceive(const char* data, int length) override {
+        std::string received(data, length);
+        std::cout << "Received: " << received << std::endl;
+        // ... process the received data ...
+        if (received == "exit") {  // Example: close connection on "exit" command
+            closeClient();
+        }
+    }
+};
 
 int main(int argc, char **argv)
 {
@@ -33,11 +51,14 @@ int main(int argc, char **argv)
     }
 
     if (client==true) {
-        string text  = "hi this is ravi";
-        TcpStringClient tcpStringClient("127.0.0.1", 0);
-        tcpStringClient.doShell();
-//        tcpStringClient.sendString(text, text.size());
     } else {
-        tcpStringserver.runSever();
+        MyTcpSocket server("127.0.0.1", 5056);  // Listening on localhost
+        if (server.listen()) {
+            while (true) {
+                server.accept();
+                while(server.waitAndReceive()){} // Keep receiving until client disconnects/error
+            }
+            server.close();
+        }
     }
 }
