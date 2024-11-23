@@ -76,7 +76,9 @@ int main(int argc, char **argv)
 
     if (client==true) {
     } else {
-        MyTcpSocket wsserver("127.0.0.1", 5056);  // Listening on localhost
+
+        //MyTcpSocket wsserver("secondary.hyperkube.net", 5056);  // Listening on localhost
+        MyTcpSocket wsserver("0.0.0.0", 5056);  // Listening on localhost
         if (wsserver.listen()) {
             while (true) {
                 wsserver.accept();
@@ -84,9 +86,8 @@ int main(int argc, char **argv)
             }
             wsserver.close();
         }
-        /*
-        MyWebSocketSecureServer tcpserver;
-        tcpserver.startServer();
-        */
+
+    //    MyWebSocketSecureServer tcpserver;
+    //    tcpserver.startServer();
     }
 }
