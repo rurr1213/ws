@@ -1,6 +1,176 @@
 //
 #include "WebSocket.h"
 
+WebSocketSecureServer::WebSocketSecureServer(
+    const std::string key_file,
+    const std::string cert_file,
+    const std::string ipAddress, int port, Logger logger)
+    : TcpSocket(ipAddress, port),
+    key_file(key_file),
+    cert_file(cert_file),
+    ssl(nullptr),
+    logger(logger)
+    {  // Correctly initialize key_file and cert_file
+
+    ctx = SSL_CTX_new(TLS_server_method()); // Use TLSv1.2 or later
+
+    if (!ctx) {
+        perror("SSL_CTX_new failed");
+        // Or handle the error appropriately - potentially throw an exception.  This is the shared object, so it's serious if this fails.
+    }
+
+
+    if (SSL_CTX_use_certificate_file(ctx, cert_file.c_str(), SSL_FILETYPE_PEM) <= 0) {
+        perror("SSL_CTX_use_certificate_file failed");
+        SSL_CTX_free(ctx);
+        // Or handle the error appropriately - potentially throw an exception
+    }
+
+
+        if (SSL_CTX_use_PrivateKey_file(ctx, key_file.c_str(), SSL_FILETYPE_PEM) <= 0 ) {
+        perror("SSL_CTX_use_PrivateKey_file failed");
+        SSL_CTX_free(ctx);
+        // Or handle the error appropriately - potentially throw an exception
+    }
+}
+
+WebSocketSecureServer::~WebSocketSecureServer() {
+    std::lock_guard<std::mutex> lock(sslMutex); // Protect ssl in destructor
+    if (ssl) {
+        SSL_free(ssl);
+        ssl = nullptr;
+    }
+    SSL_CTX_free(ctx);
+}
+
+void WebSocketSecureServer::startServer() {
+    while (true) {
+        if (!listen()) {
+            // Handle listen error
+            return;
+        }
+        accept(); // Use TcpSocket::accept()
+    }
+}
+
+bool WebSocketSecureServer::performSSLHandshake(int clientSocket) {
+
+    SSL *_ssl = SSL_new(ctx);
+    if (!_ssl) {
+        perror("SSL_new failed");
+        closeClient();  // Close the client socket on error
+        return false;
+    }
+
+    SSL_set_fd(_ssl, clientSocket);
+
+    int ret = SSL_accept(_ssl);
+    if (ret <= 0) {
+        char errBuf[256];
+        ERR_error_string_n(ERR_get_error(), errBuf, sizeof(errBuf));
+        std::cerr << "SSL_accept failed: " << errBuf << std::endl;
+        SSL_free(_ssl);     // Free the SSL object on error
+        closeClient();     // Close the client socket on error
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(sslMutex);  // Acquire the mutex.
+        ssl = _ssl;
+    }
+
+    return true;
+}
+
+bool WebSocketSecureServer::isWebSocketUpgradeRequest(const std::string& requestHeaders) { // Check headers for WebSocket upgrade
+
+    // Check for key headers indicating a WebSocket upgrade request
+    bool upgradeHeaderPresent = (requestHeaders.find("Upgrade: websocket") != std::string::npos);
+    bool connectionHeaderPresent = (requestHeaders.find("Connection: Upgrade") != std::string::npos);
+    bool keyHeaderPresent = (requestHeaders.find("Sec-WebSocket-Key:") != std::string::npos);
+    bool versionHeaderPresent = (requestHeaders.find("Sec-WebSocket-Version: 13") != std::string::npos); // Check for version 13 or later as needed.
+
+    if (upgradeHeaderPresent && connectionHeaderPresent && keyHeaderPresent && versionHeaderPresent) {
+        return true; // All required headers present
+    }
+
+    return false; // Not a WebSocket upgrade request
+};
+
+void WebSocketSecureServer::handleWebSocketConnection() {
+
+    std::vector<uint8_t> fragmentedMessage; // To handle message fragmentation
+
+    while (true) {  // Main WebSocket loop
+        if (ssl == nullptr) {
+            logError("Invalid ssl pointer in handleWebSocketConnection()");
+            return;
+        }
+
+        WebSocketFrame frame;
+        if (!readWebSocketFrame(frame)) {
+            logInfo("Closing client connection");
+            break; //  Return on error or close
+        }
+
+        if (!frame.fin) { /* Handle fragmented frames if needed.  This example treats each frame as a complete message. */ }
+
+
+        // Process the frame based on its opcode
+        switch (frame.opcode) {
+            case OP_TEXT: {
+                std::string textMessage(frame.payload.begin(), frame.payload.end());
+                std::cout << "Received text message: " << textMessage << std::endl;
+                onReceiveStringData(textMessage);
+                break;
+            }
+            case OP_BINARY: {
+                std::cout << "Received binary message (" << frame.payload.size() << " bytes)" << std::endl;
+                onReceiveBinaryData(frame.payload, frame.payload.size());
+                // ... process binary message (e.g., save to file, etc.) ...
+                break;
+            }
+            case OP_PING: {
+                    // Respond to ping with a pong
+                WebSocketFrame pongFrame;
+                pongFrame.opcode = OP_PONG;
+                pongFrame.fin = true;
+                pongFrame.payload = frame.payload; // Echo back the ping payload
+                sendWebSocketFrame(pongFrame);
+
+                break;
+            }
+            case OP_CLOSE: {
+                // Client initiated close.  Echo the close frame back and close the connection.
+                WebSocketFrame closeFrame;
+                closeFrame.opcode = OP_CLOSE;
+                closeFrame.fin = true;
+                sendWebSocketFrame(closeFrame);
+                return;  // Exit the handleWebSocketConnection loop
+            }
+            default: {
+                // Handle other opcodes or unexpected frames.  You might want to close the connection here.
+                std::cerr << "Unexpected WebSocket opcode: " << (int)frame.opcode << std::endl;
+                return; // or handle the error as needed.
+            }
+        }
+    }
+    { // Ensure the lock's scope is limited to the section where `ssl` is used/modified
+        std::lock_guard<std::mutex> lock(sslMutex);  // Acquire mutex.
+        SSL_free(ssl);    // Free the SSL object after the loop finishes
+        ssl = nullptr;   // Very important to prevent potential double-free in the destructor
+
+    }
+    closeClient(); // Close the client socket after disconnecting.
+}
+
+void WebSocketSecureServer::onReceiveStringData(std::string& textString) {
+}
+
+void WebSocketSecureServer::onReceiveBinaryData(uint8_t *, std::size_t) {
+}
+
+
 std::string WebSocketSecureServer::base64_encode(const unsigned char *input, int length)
 {
     BIO *bmem, *b64;
@@ -172,6 +342,7 @@ bool WebSocketSecureServer::readWebSocketFrame(WebSocketFrame& frame) {
         bytesRead = SSL_read(ssl, frame.payload.data() + totalPayloadBytesRead, frame.payload_length - totalPayloadBytesRead);
         if (bytesRead <= 0) {
             std::cerr << "Error or connection closed while reading payload" << std::endl;// Handle error or connection close
+            logError("Error or connection closed while reading payload");
             return false;
         }
         totalPayloadBytesRead += bytesRead;
@@ -224,7 +395,8 @@ bool WebSocketSecureServer::sendWebSocketFrame(const WebSocketFrame& frame) {
         int bytesSent = SSL_write(ssl, buffer.data() + totalBytesSent, buffer.size() - totalBytesSent);
 
         if (bytesSent <= 0) {
-                std::cerr << "Error sending frame" << std::endl;
+            std::cerr << "Error sending frame" << std::endl;
+            logError("Error sending frame");
             return false; // handle error
         }
         totalBytesSent += bytesSent;
