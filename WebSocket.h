@@ -89,7 +89,7 @@ public:
 
     std::string base64_encode(const unsigned char *input, int length);
 
-    bool handleWebSocketConnection();
+    bool handleReceiveEvent();
 
     bool readWebSocketFrame(WebSocketFrame& frame);
 

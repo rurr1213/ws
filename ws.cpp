@@ -71,8 +71,8 @@ void MyWebSocketSecureServer::listenThreadFunc() {
 
 
 void MyWebSocketSecureServer::readThreadFunc() {
-    while (handleWebSocketConnection()) {
-        // Connection is active.  The loop continues as long as handleWebSocketConnection returns true.
+    while (handleReceiveEvent()) {
+        // Connection is active.  The loop continues as long as handleReceiveEvent returns true.
     }
     // Connection closed or error. Clean up.
     std::cout << "Client disconnected\n";

@@ -88,95 +88,95 @@ bool WebSocketSecureServer::isWebSocketUpgradeRequest(const std::string& request
     return false; // Not a WebSocket upgrade request
 };
 
-bool WebSocketSecureServer::handleWebSocketConnection() {
+bool WebSocketSecureServer::handleReceiveEvent() {
     fd_set readfds;
     timeval timeout;
 
-    while (true) {  // Main WebSocket loop
-        if (!connection.valid()) {
-            logError("Invalid ssl pointer in handleWebSocketConnection()");
-            return false;
-        }
+    if (!connection.valid()) {
+        logError("Invalid ssl pointer in handleReceiveEvent()");
+        return false;
+    }
 
-        // Setup select()
-        FD_ZERO(&readfds);
-        FD_SET(connection.getSocket(), &readfds);
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 100000; // Set timeout (e.g., 100ms)
+    // Setup select()
+    FD_ZERO(&readfds);
+    FD_SET(connection.getSocket(), &readfds);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 100000; // Set timeout (e.g., 100ms)
 
-        int activity = select(connection.getSocket() + 1, &readfds, NULL, NULL, &timeout);
+    int activity = select(connection.getSocket() + 1, &readfds, NULL, NULL, &timeout);
 
-        if (activity < 0) {
-            perror("select error");
-            logError("Select() returned error");
-            return false;
-        } else if (activity == 0) {
-            continue; // Timeout; No data to read yet.
-        }
+    if (activity < 0) {
+        perror("select error");
+        logError("Select() returned error");
+        return false;
+    } else if (activity == 0) {
+        return true; // Timeout; No data to read yet.
+    }
 
-        // Read and process the frame
-        WebSocketFrame frame;
-        if (!readWebSocketFrame(frame)) {
-            logInfo("Closing client connection (readWebSocketFrame failed)");
-            return false; // Return false to indicate connection closed
-        }
+    // Read and process the frame
+    WebSocketFrame frame;
+    if (!readWebSocketFrame(frame)) {
+        logInfo("Closing client connection (readWebSocketFrame failed)");
+        return false; // Return false to indicate connection closed
+    }
 
-        // Handle fragmentation
-        if (frame.opcode == OP_TEXT || frame.opcode == OP_BINARY) {
-            if (!frame.fin) { // Not the final frame
-                std::lock_guard<std::mutex> lock(connection.fragmentedMutex); // Lock for fragment access
-                connection.fragmentedMessage.insert(connection.fragmentedMessage.end(), frame.payload.begin(), frame.payload.end());
-                continue; // Get more fragments
-            } else { // Final frame (or single-frame message)
-                std::lock_guard<std::mutex> lock(connection.fragmentedMutex); // Lock for fragment access
-                if (!connection.fragmentedMessage.empty()) {
-                    connection.fragmentedMessage.insert(connection.fragmentedMessage.end(), frame.payload.begin(), frame.payload.end());
-                    frame.payload = connection.fragmentedMessage; // Use the combined message
-                    connection.fragmentedMessage.clear(); // Clear for the next message
-                }
-            }
-        } else if (!connection.fragmentedMessage.empty()) { // Discard fragments on control frame.
+    // Handle fragmentation
+    if (frame.opcode == OP_TEXT || frame.opcode == OP_BINARY) {
+        if (!frame.fin) { // Not the final frame
             std::lock_guard<std::mutex> lock(connection.fragmentedMutex); // Lock for fragment access
-            connection.fragmentedMessage.clear();
-        }
-
-
-        // Process the complete frame based on its opcode
-        switch (frame.opcode) {
-            case OP_TEXT: {
-                std::string textMessage(frame.payload.begin(), frame.payload.end());
-                std::cout << "Received text message: " << textMessage << std::endl;
-                onReceiveStringData(textMessage);
-                break;
-            }
-            case OP_BINARY: {
-                std::cout << "Received binary message (" << frame.payload.size() << " bytes)" << std::endl;
-                onReceiveBinaryData(frame.payload.data(), frame.payload.size());
-                break;
-            }
-            case OP_PING: {
-                WebSocketFrame pongFrame;
-                pongFrame.opcode = OP_PONG;
-                pongFrame.fin = true;
-                pongFrame.payload = frame.payload; // Echo back the ping payload
-                sendWebSocketFrame(pongFrame);
-                break;
-            }
-            case OP_CLOSE: {
-                WebSocketFrame closeFrame;
-                closeFrame.opcode = OP_CLOSE;
-                closeFrame.fin = true;
-                sendWebSocketFrame(closeFrame);
-                closeClient();  // Close the client connection
-                return false;  // Indicate connection closed
-            }
-            default: {
-                std::cerr << "Unexpected WebSocket opcode: " << (int)frame.opcode << std::endl;
-                closeClient(); // Close on unexpected opcode
-                return false;
+            connection.fragmentedMessage.insert(connection.fragmentedMessage.end(), frame.payload.begin(), frame.payload.end());
+            return true; // Get more fragments
+        } else { // Final frame (or single-frame message)
+            std::lock_guard<std::mutex> lock(connection.fragmentedMutex); // Lock for fragment access
+            if (!connection.fragmentedMessage.empty()) {
+                connection.fragmentedMessage.insert(connection.fragmentedMessage.end(), frame.payload.begin(), frame.payload.end());
+                frame.payload = connection.fragmentedMessage; // Use the combined message
+                connection.fragmentedMessage.clear(); // Clear for the next message
             }
         }
-    } // End of main while loop
+    } else if (!connection.fragmentedMessage.empty()) { // Discard fragments on control frame.
+        std::lock_guard<std::mutex> lock(connection.fragmentedMutex); // Lock for fragment access
+        connection.fragmentedMessage.clear();
+    }
+
+
+    // Process the complete frame based on its opcode
+    switch (frame.opcode) {
+        case OP_TEXT: {
+            std::string textMessage(frame.payload.begin(), frame.payload.end());
+            std::cout << "Received text message: " << textMessage << std::endl;
+            onReceiveStringData(textMessage);
+            break;
+        }
+        case OP_BINARY: {
+            std::cout << "Received binary message (" << frame.payload.size() << " bytes)" << std::endl;
+            onReceiveBinaryData(frame.payload.data(), frame.payload.size());
+            break;
+        }
+        case OP_PING: {
+            WebSocketFrame pongFrame;
+            pongFrame.opcode = OP_PONG;
+            pongFrame.fin = true;
+            pongFrame.payload = frame.payload; // Echo back the ping payload
+            sendWebSocketFrame(pongFrame);
+            break;
+        }
+        case OP_CLOSE: {
+            WebSocketFrame closeFrame;
+            closeFrame.opcode = OP_CLOSE;
+            closeFrame.fin = true;
+            sendWebSocketFrame(closeFrame);
+            closeClient();  // Close the client connection
+            return false;  // Indicate connection closed
+        }
+        default: {
+            std::cerr << "Unexpected WebSocket opcode: " << (int)frame.opcode << std::endl;
+            closeClient(); // Close on unexpected opcode
+            return false;
+        }
+    }
+
+    return true;
 }
 
 void WebSocketSecureServer::onReceiveStringData(std::string& textString) {
@@ -209,7 +209,7 @@ std::string WebSocketSecureServer::base64_encode(const unsigned char *input, int
 
 bool WebSocketSecureServer::onAccept(int clientSocket, const sockaddr_in& clientAddress) {
     TcpSocket::onAccept(clientSocket, clientAddress);  // Call the base class version if needed, or provide your custom behavior
-    connection.setSocket(clientSocket); 
+    connection.setSocket(clientSocket);
     logInfo("onAccept");
     if (!performSSLHandshake(clientSocket)) {
         // Handle handshake failure;  closeClient() is likely already called in performSSLHandshake.
