@@ -79,8 +79,17 @@ public:
 
     bool onAccept(int clientSocket, const sockaddr_in& clientAddress);
 
-    void startServer();
+    void onReceiveBinaryData(const std::vector<uint8_t>& data, size_t length);
+    virtual void onReceiveBinaryData(uint8_t *, std::size_t);
+    virtual void onReceiveStringData(std::string& textString);
 
+    bool sendStringData(const std::string& textString);
+    bool sendBinaryData(const char* data, int length);
+    bool waitForReceiveEvent();
+    bool handleReceiveEvent();
+    bool writeToConnection(const std::vector<uint8_t>& data);
+
+private:
     bool performSSLHandshake(int clientSocket);
 
     bool isWebSocketUpgradeRequest(const std::string& requestHeaders);
@@ -89,26 +98,10 @@ public:
 
     std::string base64_encode(const unsigned char *input, int length);
 
-    bool waitForReceiveEvent();
-    bool handleReceiveEvent();
-
     bool readWebSocketFrame(WebSocketFrame& frame);
-
     bool sendWebSocketFrame(const WebSocketFrame& frame);
 
-    virtual void onReceiveStringData(std::string& textString);
-
-    virtual void onReceiveBinaryData(uint8_t *, std::size_t);
-
-    void onReceiveBinaryData(const std::vector<uint8_t>& data, size_t length);
-
-    bool sendStringData(const std::string& textString);
-
-    bool sendBinaryData(const char* data, int length);
-
     bool readFromConnection(Connection* connection, std::vector<uint8_t>& data);
-    bool writeToConnection(const std::vector<uint8_t>& data);
-
     void onWebSocketDataReceived(const std::vector<uint8_t>& data);
 
     WebSocketFrame createFrame(const std::vector<uint8_t>& data, WebSocketOpcode opcode);

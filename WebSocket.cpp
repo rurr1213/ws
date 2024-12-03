@@ -37,15 +37,6 @@ WebSocketSecureServer::~WebSocketSecureServer() {
     SSL_CTX_free(ctx);
 }
 
-void WebSocketSecureServer::startServer() {
-    while (true) {
-        if (!listen()) {
-            // Handle listen error
-            return;
-        }
-        accept(); // Use TcpSocket::accept()
-    }
-}
 
 bool WebSocketSecureServer::performSSLHandshake(int clientSocket) {
 
