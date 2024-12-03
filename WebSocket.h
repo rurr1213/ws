@@ -89,6 +89,7 @@ public:
 
     std::string base64_encode(const unsigned char *input, int length);
 
+    bool waitForReceiveEvent();
     bool handleReceiveEvent();
 
     bool readWebSocketFrame(WebSocketFrame& frame);
@@ -105,7 +106,6 @@ public:
 
     bool sendBinaryData(const char* data, int length);
 
-    Connection* acceptConnection();
     bool readFromConnection(Connection* connection, std::vector<uint8_t>& data);
     bool writeToConnection(const std::vector<uint8_t>& data);
 

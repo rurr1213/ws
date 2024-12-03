@@ -88,12 +88,12 @@ bool WebSocketSecureServer::isWebSocketUpgradeRequest(const std::string& request
     return false; // Not a WebSocket upgrade request
 };
 
-bool WebSocketSecureServer::handleReceiveEvent() {
+bool WebSocketSecureServer::waitForReceiveEvent() {
     fd_set readfds;
     timeval timeout;
 
     if (!connection.valid()) {
-        logError("Invalid ssl pointer in handleReceiveEvent()");
+        logError("Invalid ssl pointer in waitForReceiveEvent()");
         return false;
     }
 
@@ -113,6 +113,10 @@ bool WebSocketSecureServer::handleReceiveEvent() {
         return true; // Timeout; No data to read yet.
     }
 
+    return true;
+}
+
+bool WebSocketSecureServer::handleReceiveEvent() {
     // Read and process the frame
     WebSocketFrame frame;
     if (!readWebSocketFrame(frame)) {
@@ -440,26 +444,6 @@ bool WebSocketSecureServer::sendBinaryData(const char* data, int length) {
     frame.payload.assign(data, data + length); // Convert char* to vector<uint8_t>
     return sendWebSocketFrame(frame);  // Corrected: Use member ssl
 }
-
-Connection* WebSocketSecureServer::acceptConnection() {
-    int clientSocket;
-    struct sockaddr_in clientAddress;
-    socklen_t clientAddressLength = sizeof(clientAddress);
-
-    clientSocket = ::accept(listeningSocket, (struct sockaddr *)&clientAddress, &clientAddressLength);
-    if (clientSocket < 0) {
-        perror("accept failed");
-        return nullptr;
-    }
-    TcpSocket::onAccept(clientSocket, clientAddress);
-    if (!performSSLHandshake(clientSocket)) {
-        logError("sslHand shake failed");
-        closeClient();  // Ensure client socket is closed on handshake failure.
-        return nullptr; // Return nullptr to indicate failure.
-    }
-    return &connection;
-}
-
 
 bool WebSocketSecureServer::readFromConnection(Connection* connection, std::vector<uint8_t>& data) {
     WebSocketFrame frame;
