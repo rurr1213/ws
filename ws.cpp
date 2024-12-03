@@ -71,13 +71,11 @@ void MyWebSocketSecureServer::listenThreadFunc() {
 
 
 void MyWebSocketSecureServer::readThreadFunc() {
-    std::vector<uint8_t> data;
-    handleWebSocketConnection();
-
-    // Connection closed or error.  Close connection and clean up.
+    while (handleWebSocketConnection()) {
+        // Connection is active.  The loop continues as long as handleWebSocketConnection returns true.
+    }
+    // Connection closed or error. Clean up.
     std::cout << "Client disconnected\n";
-//    connection->close();   // Close SSL connection
-//    delete connection;      // Delete the Connection object
 }
 
 void MyWebSocketSecureServer::onReceiveStringData(std::string& textString)
