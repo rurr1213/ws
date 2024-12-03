@@ -103,21 +103,47 @@ bool WebSocketSecureServer::handleWebSocketConnection() {
             break; //  Return on error or close
         }
 
-        if (!frame.fin) { /* Handle fragmented frames if needed.  This example treats each frame as a complete message. */ }
+        // Handle fragmentation
+        if (frame.opcode == OP_TEXT || frame.opcode == OP_BINARY) {
+            if (!frame.fin) { // If not the final frame
+                fragmentedMessage.insert(fragmentedMessage.end(), frame.payload.begin(), frame.payload.end());
+                continue; // Go to the next frame
+            } else { // Final frame (or a single-frame message)
+                if (!fragmentedMessage.empty()) {
+                    // Append the last fragment
+                    fragmentedMessage.insert(fragmentedMessage.end(), frame.payload.begin(), frame.payload.end());
+                }
+            }
+        }
+
 
 
         // Process the frame based on its opcode
         switch (frame.opcode) {
             case OP_TEXT: {
-                std::string textMessage(frame.payload.begin(), frame.payload.end());
+                std::string textMessage;
+                if (fragmentedMessage.empty()) {
+                    textMessage = std::string(frame.payload.begin(), frame.payload.end());
+                } else {
+                    textMessage = std::string(fragmentedMessage.begin(), fragmentedMessage.end());
+                    fragmentedMessage.clear();
+                }
+
                 std::cout << "Received text message: " << textMessage << std::endl;
                 onReceiveStringData(textMessage);
                 break;
             }
             case OP_BINARY: {
-                std::cout << "Received binary message (" << frame.payload.size() << " bytes)" << std::endl;
-                onReceiveBinaryData(frame.payload, frame.payload.size());
-                // ... process binary message (e.g., save to file, etc.) ...
+                if (fragmentedMessage.empty()) {
+                    std::cout << "Received binary message (" << frame.payload.size() << " bytes)" << std::endl;
+                    onReceiveBinaryData(frame.payload, frame.payload.size());
+                }
+                else {
+                    std::cout << "Received binary message (" << fragmentedMessage.size() << " bytes)" << std::endl;
+                    onReceiveBinaryData(fragmentedMessage, fragmentedMessage.size());
+                    fragmentedMessage.clear();
+                }
+
                 break;
             }
             case OP_PING: {

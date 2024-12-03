@@ -25,6 +25,12 @@ public:
             return false;
         }
 
+        // Set SO_REUSEADDR option  <--- Add this block
+        int option = 1;
+        if (setsockopt(listeningSocket, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) < 0) {
+            perror("setsockopt(SO_REUSEADDR) failed");  // Handle error, but don't necessarily fail
+        }
+        
         sockaddr_in serverAddress;
         serverAddress.sin_family = AF_INET;
         serverAddress.sin_port = htons(port);
