@@ -4,14 +4,18 @@
 #include <unistd.h>
 
 #include "WebSocket.h"
+#include "TcpSocket.h"
+#include "Connection.h"
+
 
 class MyTcpSocket : public TcpSocket {
 public:
     MyTcpSocket(const std::string& ip, int port) : TcpSocket(ip, port) {}
 
-    void onAccept(int clientSocket, const sockaddr_in& clientAddress) override {
+    bool onAccept(int clientSocket, const sockaddr_in& clientAddress) override {
         std::cout << "Client connected from: " << inet_ntoa(clientAddress.sin_addr) << std::endl;
         // ... other actions after accepting a connection ...
+        return true;
     }
 
     void onReceive(const char* data, int length) override {
@@ -39,14 +43,81 @@ class MyWebSocketSecureServer : public WebSocketSecureServer {
 public:
     MyWebSocketSecureServer() : WebSocketSecureServer(keyFile, certFile, ip_address, ws_port, thislogger) {}
 
-    void onReceiveStringData(std::string& textString) {
-        std::cout << "RecT: " << textString << std::endl;
-    }
+    void listenThreadFunc();
+    void writeThreadFunc();
+    void readThreadFunc();
 
-    void onReceiveBinaryData(uint8_t *, std::size_t) {
-        std::cout << "RecB: " << std::endl;
-    }
+    void onReceiveStringData(std::string& textString);
+
+    virtual void onReceiveBinaryData(uint8_t *, std::size_t);
 };
+
+void MyWebSocketSecureServer::listenThreadFunc() {
+    if (!listen()) { // Call listen ONLY once
+        std::cout << "Listen failed"; // Handle the error appropriately
+        return;
+    }
+    while (true) {
+        bool stat = accept();
+        if (stat) {
+            std::cout << "Client connected\n";
+        std::thread readThread(&MyWebSocketSecureServer::readThreadFunc, this);
+        readThread.detach(); // Let the read thread manage its own lifetime
+        } else {
+            std::cout << "Accept failed"; // Handle the error appropriately
+        }
+    }
+}
+
+
+void MyWebSocketSecureServer::readThreadFunc() {
+    std::vector<uint8_t> data;
+    handleWebSocketConnection();
+
+    // Connection closed or error.  Close connection and clean up.
+    std::cout << "Client disconnected\n";
+//    connection->close();   // Close SSL connection
+//    delete connection;      // Delete the Connection object
+}
+
+void MyWebSocketSecureServer::onReceiveStringData(std::string& textString)
+{
+    std::vector<uint8_t> data(textString.begin(), textString.end());
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        connectionDataQueue.push(data);
+    }
+    queueCV.notify_one();  // Notify the write thread
+}
+
+void MyWebSocketSecureServer::onReceiveBinaryData(uint8_t *pdata, std::size_t length)
+{
+    std::vector<uint8_t> data(pdata, pdata + length); ;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        connectionDataQueue.push(data);
+    }
+    queueCV.notify_one();  // Notify the write thread
+}
+
+
+void MyWebSocketSecureServer::writeThreadFunc() {
+    while (true) {
+        std::unique_lock<std::mutex> lock(queueMutex);
+        queueCV.wait(lock, [this] { return !connectionDataQueue.empty(); });  // Wait for data
+
+        std::vector<uint8_t> data = connectionDataQueue.front();
+        connectionDataQueue.pop();
+        lock.unlock();  // Release lock before potential long write operation
+
+        // Get the connection - simplified approach, needs improvement in real application.
+        if (writeToConnection(data)) {
+             // Data sent successfully
+        } else {
+            // Handle write error, might need to close connection.
+        }
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -88,7 +159,14 @@ int main(int argc, char **argv)
             wsserver.close();
         }
         */
-        MyWebSocketSecureServer tcpserver;
-        tcpserver.startServer();
+        MyWebSocketSecureServer server;
+        std::thread listenThread(&MyWebSocketSecureServer::listenThreadFunc, &server);
+        std::thread writeThread(&MyWebSocketSecureServer::writeThreadFunc, &server);
+
+        listenThread.join(); // Keep the server running
+        writeThread.join();
+
+//        MyWebSocketSecureServer tcpserver;
+//        tcpserver.startServer();
     }
 }

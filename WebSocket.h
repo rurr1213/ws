@@ -1,3 +1,4 @@
+#pragma once
 #include <functional>
 #include <string>
 #include <sys/socket.h>
@@ -13,8 +14,13 @@
 #include <openssl/bio.h> // For BIO functions
 #include <openssl/evp.h> // For Base64 encoding/decoding
 #include <mutex> // Include mutex header
+#include <queue>
+#include <thread>
+#include <condition_variable>
 
 #include "TcpSocket.h"
+#include "SharedSSL.h"
+#include "Connection.h"
 
 class Logger {
 public:
@@ -23,13 +29,11 @@ public:
     }
 };
 
-class WebSocketSecureServer : TcpSocket {
+class WebSocketSecureServer : public TcpSocket {
 
     SSL_CTX *ctx;
     std::string key_file;
     std::string cert_file;
-    SSL* ssl;  // Add ssl as a member
-    std::mutex sslMutex;  // Mutex to protect ssl
 
     Logger logger;
 
@@ -59,8 +63,13 @@ class WebSocketSecureServer : TcpSocket {
         std::vector<uint8_t> payload;
     };
 
+    Connection connection;
 
 public:
+    std::queue<std::vector<uint8_t>> connectionDataQueue;
+    std::mutex queueMutex;
+    std::condition_variable queueCV;
+
     WebSocketSecureServer(
         const std::string key_file,
         const std::string cert_file,
@@ -68,7 +77,7 @@ public:
 
     ~WebSocketSecureServer();
 
-    void onAccept(int clientSocket, const sockaddr_in& clientAddress);
+    bool onAccept(int clientSocket, const sockaddr_in& clientAddress);
 
     void startServer();
 
@@ -80,7 +89,7 @@ public:
 
     std::string base64_encode(const unsigned char *input, int length);
 
-    void handleWebSocketConnection();
+    bool handleWebSocketConnection();
 
     bool readWebSocketFrame(WebSocketFrame& frame);
 
@@ -96,6 +105,11 @@ public:
 
     bool sendBinaryData(const char* data, int length);
 
-private:
+    Connection* acceptConnection();
+    bool readFromConnection(Connection* connection, std::vector<uint8_t>& data);
+    bool writeToConnection(const std::vector<uint8_t>& data);
 
+    void onWebSocketDataReceived(const std::vector<uint8_t>& data);
+
+    WebSocketFrame createFrame(const std::vector<uint8_t>& data, WebSocketOpcode opcode);
 };

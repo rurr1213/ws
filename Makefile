@@ -2,7 +2,7 @@ include MakefileCommon.inc
 
 # Compiler and flags (using variables from MakefileCommon.inc where possible)
 CC = g++
-CFLAGS = -g3 -O0 $(CXXFLAGS) -I$(SRC_DIR)  # Include the source directory for headers
+CFLAGS = -g3 -O0 -fsanitize=address $(CXXFLAGS) -I$(SRC_DIR)  # Include the source directory for headers
 # Define subdirectory containing source files (if any) - Adjust if necessary
 SRC_DIR = .
 

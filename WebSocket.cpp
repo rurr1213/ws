@@ -8,7 +8,6 @@ WebSocketSecureServer::WebSocketSecureServer(
     : TcpSocket(ipAddress, port),
     key_file(key_file),
     cert_file(cert_file),
-    ssl(nullptr),
     logger(logger)
     {  // Correctly initialize key_file and cert_file
 
@@ -35,11 +34,6 @@ WebSocketSecureServer::WebSocketSecureServer(
 }
 
 WebSocketSecureServer::~WebSocketSecureServer() {
-    std::lock_guard<std::mutex> lock(sslMutex); // Protect ssl in destructor
-    if (ssl) {
-        SSL_free(ssl);
-        ssl = nullptr;
-    }
     SSL_CTX_free(ctx);
 }
 
@@ -74,10 +68,7 @@ bool WebSocketSecureServer::performSSLHandshake(int clientSocket) {
         return false;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(sslMutex);  // Acquire the mutex.
-        ssl = _ssl;
-    }
+    connection.setSSL(_ssl);
 
     return true;
 }
@@ -97,14 +88,13 @@ bool WebSocketSecureServer::isWebSocketUpgradeRequest(const std::string& request
     return false; // Not a WebSocket upgrade request
 };
 
-void WebSocketSecureServer::handleWebSocketConnection() {
-
+bool WebSocketSecureServer::handleWebSocketConnection() {
     std::vector<uint8_t> fragmentedMessage; // To handle message fragmentation
 
     while (true) {  // Main WebSocket loop
-        if (ssl == nullptr) {
+        if (!connection.valid()) {
             logError("Invalid ssl pointer in handleWebSocketConnection()");
-            return;
+            return false;
         }
 
         WebSocketFrame frame;
@@ -146,22 +136,17 @@ void WebSocketSecureServer::handleWebSocketConnection() {
                 closeFrame.opcode = OP_CLOSE;
                 closeFrame.fin = true;
                 sendWebSocketFrame(closeFrame);
-                return;  // Exit the handleWebSocketConnection loop
+                return false;  // Exit the handleWebSocketConnection loop
             }
             default: {
                 // Handle other opcodes or unexpected frames.  You might want to close the connection here.
                 std::cerr << "Unexpected WebSocket opcode: " << (int)frame.opcode << std::endl;
-                return; // or handle the error as needed.
+                return false; // or handle the error as needed.
             }
         }
     }
-    { // Ensure the lock's scope is limited to the section where `ssl` is used/modified
-        std::lock_guard<std::mutex> lock(sslMutex);  // Acquire mutex.
-        SSL_free(ssl);    // Free the SSL object after the loop finishes
-        ssl = nullptr;   // Very important to prevent potential double-free in the destructor
-
-    }
     closeClient(); // Close the client socket after disconnecting.
+    return true;
 }
 
 void WebSocketSecureServer::onReceiveStringData(std::string& textString) {
@@ -192,13 +177,13 @@ std::string WebSocketSecureServer::base64_encode(const unsigned char *input, int
 
 
 
-void WebSocketSecureServer::onAccept(int clientSocket, const sockaddr_in& clientAddress) {
+bool WebSocketSecureServer::onAccept(int clientSocket, const sockaddr_in& clientAddress) {
     TcpSocket::onAccept(clientSocket, clientAddress);  // Call the base class version if needed, or provide your custom behavior
     logInfo("onAccept");
     if (!performSSLHandshake(clientSocket)) {
         // Handle handshake failure;  closeClient() is likely already called in performSSLHandshake.
         logError("sslHand shake failed");
-        return;
+        return false;
     }
 
     std::string requestHeaders;
@@ -207,13 +192,13 @@ void WebSocketSecureServer::onAccept(int clientSocket, const sockaddr_in& client
 
     // Read headers line by line
     do {
-        std::lock_guard<std::mutex> lock(sslMutex);
-        bytesRead = SSL_read(ssl, buffer, sizeof(buffer) - 1);
+        auto ssl = connection.getSSL(); // Get the shared_ptr
+        if (!ssl) return false;
+
+        bytesRead = SSL_read(ssl.get(), buffer, sizeof(buffer) - 1);
         if (bytesRead <= 0) {
-            // ... handle SSL read error ...
-            SSL_free(ssl);
             closeClient();
-            return;
+            return false;
         }
         buffer[bytesRead] = '\0';
         requestHeaders += buffer;
@@ -221,21 +206,15 @@ void WebSocketSecureServer::onAccept(int clientSocket, const sockaddr_in& client
 
     if (isWebSocketUpgradeRequest(requestHeaders) && // New function to check request headers
         upgradeToWebSocket(requestHeaders)) { // Pass the request to upgradeToWebSocket()
-        handleWebSocketConnection();
+        return true;
     } else { // Handle WebSocket upgrade failure
-        std::lock_guard<std::mutex> lock(sslMutex);
-        SSL_free(ssl);
-        ssl = nullptr;
+        auto ssl = connection.getSSL(); // Get the shared_ptr
+        if (!ssl) return false;
+        SSL_free(ssl.get());
         closeClient();
-        return;
+        return false;
     }
-
-    {
-        std::lock_guard<std::mutex> lock(sslMutex);  // reacquire the mutex before freeing ssl
-        SSL_free(ssl);
-        ssl = nullptr;
-    }
-    closeClient();
+    return true;
 }
 
 bool WebSocketSecureServer::upgradeToWebSocket(const std::string& requestHeaders) {
@@ -275,8 +254,9 @@ bool WebSocketSecureServer::upgradeToWebSocket(const std::string& requestHeaders
 
     // 4. Send the response
     {
-        std::lock_guard<std::mutex> lock(sslMutex);  // Acquire the mutex.
-        int bytesWritten = SSL_write(ssl, response.c_str(), response.length());
+        auto ssl = connection.getSSL(); // Get the shared_ptr
+        if (!ssl) return false;
+        int bytesWritten = SSL_write(ssl.get(), response.c_str(), response.length());
 
         if (bytesWritten <= 0) {
             std::cerr << "Error writing WebSocket handshake response" << std::endl;
@@ -288,12 +268,14 @@ bool WebSocketSecureServer::upgradeToWebSocket(const std::string& requestHeaders
 }
 
 bool WebSocketSecureServer::readWebSocketFrame(WebSocketFrame& frame) {
-    std::lock_guard<std::mutex> lock(sslMutex);  // Acquire mutex before using ssl
+    auto ssl = connection.getSSL(); // Get the shared_ptr
+    if (!ssl) return false;
+
     logInfo("reading web socket frame()");
 
     // 1. Read the frame header (at least 2 bytes)
     uint8_t header[2];
-    int bytesRead = SSL_read(ssl, header, 2);
+    int bytesRead = SSL_read(ssl.get(), header, 2);
     if (bytesRead <= 0) {
         // Handle error or connection close (return false)
         std::cerr << "Error reading WebSocket frame header" << std::endl;
@@ -309,14 +291,14 @@ bool WebSocketSecureServer::readWebSocketFrame(WebSocketFrame& frame) {
     // 3. Read extended payload length if necessary
     if (frame.payload_length == 126) {
         uint16_t extendedLength;
-        if (SSL_read(ssl, &extendedLength, 2) != 2) {
+        if (SSL_read(ssl.get(), &extendedLength, 2) != 2) {
             std::cerr << "Error reading extended payload length" << std::endl; // Handle error
             return false;
         }
         frame.payload_length = ntohs(extendedLength); // Convert from network byte order
     } else if (frame.payload_length == 127) {
         uint64_t extendedLength;
-        if (SSL_read(ssl, &extendedLength, 8) != 8) {
+        if (SSL_read(ssl.get(), &extendedLength, 8) != 8) {
             std::cerr << "Error reading extended payload length" << std::endl; // Handle error
             return false;
         }
@@ -327,7 +309,7 @@ bool WebSocketSecureServer::readWebSocketFrame(WebSocketFrame& frame) {
     // 4. Read masking key if masked (client-to-server frames MUST be masked)
     if (frame.masked) {
         uint8_t maskingKey[4];
-        if (SSL_read(ssl, maskingKey, 4) != 4) {
+        if (SSL_read(ssl.get(), maskingKey, 4) != 4) {
             std::cerr << "Error reading masking key" << std::endl; // Handle error
             return false;
         }
@@ -339,7 +321,7 @@ bool WebSocketSecureServer::readWebSocketFrame(WebSocketFrame& frame) {
     frame.payload.resize(frame.payload_length);  // Important! Resize the payload vector.
     uint64_t totalPayloadBytesRead = 0;
     while(totalPayloadBytesRead <  frame.payload_length) {
-        bytesRead = SSL_read(ssl, frame.payload.data() + totalPayloadBytesRead, frame.payload_length - totalPayloadBytesRead);
+        bytesRead = SSL_read(ssl.get(), frame.payload.data() + totalPayloadBytesRead, frame.payload_length - totalPayloadBytesRead);
         if (bytesRead <= 0) {
             std::cerr << "Error or connection closed while reading payload" << std::endl;// Handle error or connection close
             logError("Error or connection closed while reading payload");
@@ -360,7 +342,8 @@ bool WebSocketSecureServer::readWebSocketFrame(WebSocketFrame& frame) {
 }
 
 bool WebSocketSecureServer::sendWebSocketFrame(const WebSocketFrame& frame) {
-    std::lock_guard<std::mutex> lock(sslMutex);  // Acquire mutex before using ssl
+    auto ssl = connection.getSSL(); // Get the shared_ptr
+    if (!ssl) return false;
 
     std::vector<uint8_t> buffer;  // Construct the entire frame first for efficiency
 
@@ -392,7 +375,7 @@ bool WebSocketSecureServer::sendWebSocketFrame(const WebSocketFrame& frame) {
     long unsigned int totalBytesSent = 0;
 
     while(totalBytesSent < buffer.size()){
-        int bytesSent = SSL_write(ssl, buffer.data() + totalBytesSent, buffer.size() - totalBytesSent);
+        int bytesSent = SSL_write(ssl.get(), buffer.data() + totalBytesSent, buffer.size() - totalBytesSent);
 
         if (bytesSent <= 0) {
             std::cerr << "Error sending frame" << std::endl;
@@ -412,7 +395,6 @@ void WebSocketSecureServer::onReceiveBinaryData(const std::vector<uint8_t>& data
 }
 
 bool WebSocketSecureServer::sendStringData(const std::string& textString) {
-    std::lock_guard<std::mutex> lock(sslMutex); // Lock the mutex
     WebSocketFrame frame;
     frame.fin = true;
     frame.opcode = OP_TEXT;
@@ -421,11 +403,59 @@ bool WebSocketSecureServer::sendStringData(const std::string& textString) {
 }
 
 bool WebSocketSecureServer::sendBinaryData(const char* data, int length) {
-    std::lock_guard<std::mutex> lock(sslMutex); // Lock the mutex
     WebSocketFrame frame;
     frame.fin = true;
     frame.opcode = OP_BINARY;
     frame.payload.assign(data, data + length); // Convert char* to vector<uint8_t>
     return sendWebSocketFrame(frame);  // Corrected: Use member ssl
+}
+
+Connection* WebSocketSecureServer::acceptConnection() {
+    int clientSocket;
+    struct sockaddr_in clientAddress;
+    socklen_t clientAddressLength = sizeof(clientAddress);
+
+    clientSocket = ::accept(listeningSocket, (struct sockaddr *)&clientAddress, &clientAddressLength);
+    if (clientSocket < 0) {
+        perror("accept failed");
+        return nullptr;
+    }
+    TcpSocket::onAccept(clientSocket, clientAddress);
+    if (!performSSLHandshake(clientSocket)) {
+        logError("sslHand shake failed");
+        closeClient();  // Ensure client socket is closed on handshake failure.
+        return nullptr; // Return nullptr to indicate failure.
+    }
+    return &connection;
+}
+
+
+bool WebSocketSecureServer::readFromConnection(Connection* connection, std::vector<uint8_t>& data) {
+    WebSocketFrame frame;
+    { // Scope for mutex lock
+        //std::lock_guard<std::mutex> lock(connection->sslMutex); // Acquire the connection's mutex
+        if (!readWebSocketFrame(frame)) {
+            // handle read error as needed, might involve closing the connection from the calling function.
+            return false;
+        }
+    }
+
+    data = frame.payload; // Return payload directly (avoid extra copy)
+    return true;
+}
+
+
+bool WebSocketSecureServer::writeToConnection(const std::vector<uint8_t>& data) {
+    WebSocketFrame frame = createFrame(data, OP_TEXT); // or OP_BINARY as needed
+    //std::lock_guard<std::mutex> lock(connection->sslMutex); // Acquire the connection's mutex
+    return sendWebSocketFrame(frame);
+}
+
+WebSocketSecureServer::WebSocketFrame WebSocketSecureServer::createFrame(const std::vector<uint8_t>& data, WebSocketOpcode opcode) {
+    WebSocketFrame frame;
+    frame.fin = true;
+    frame.opcode = opcode;
+    frame.payload = data; // No need to copy if data is already a vector<uint8_t>
+    return frame;
 }
 

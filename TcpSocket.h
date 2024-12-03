@@ -1,3 +1,4 @@
+#pragma once
 #include <functional>
 #include <string>
 #include <sys/socket.h>
@@ -7,7 +8,6 @@
 #include <errno.h>
 #include <string.h>
 #include <iostream>
-
 
 class TcpSocket {
 public:
@@ -46,24 +46,23 @@ public:
         return true;
     }
 
-
-    void accept() {
+    bool accept() {
           sockaddr_in clientAddress;
           socklen_t clientAddressLength = sizeof(clientAddress);
           clientSocket = ::accept(listeningSocket, (struct sockaddr *)&clientAddress, &clientAddressLength);
 
           if (clientSocket < 0) {
               perror("accept failed");
-               return;
+              return false;
           }
-          onAccept(clientSocket, clientAddress);
+          bool stat = onAccept(clientSocket, clientAddress);
+          return stat;
     }
 
-
-    virtual void onAccept(int clientSocket, const sockaddr_in& clientAddress) {
+    virtual bool onAccept(int clientSocket, const sockaddr_in& clientAddress) {
         //  Override in derived classes
         std::cout << "Client connected" << std::endl;
-
+        return true;
     }
 
     bool waitAndReceive() {
@@ -126,7 +125,7 @@ public:
 
 
 
-private:
+protected:
     std::string ipAddress;
     int port;
     int listeningSocket;
